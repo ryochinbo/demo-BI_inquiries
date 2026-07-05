@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>問い合わせダッシュボード</title>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  body { font-family: "Segoe UI", "Meiryo", sans-serif; margin: 0; padding: 24px; background: #f5f7fa; color: #1f2937; }
+  h1 { font-size: 20px; margin: 0 0 14px; }
+  #drop { border: 2px dashed #9ca3af; border-radius: 12px; padding: 28px; text-align: center; background: #fff; color: #6b7280; cursor: pointer; }
+  #drop.dragover { border-color: #2563eb; background: #eff6ff; color: #2563eb; }
+  #drop b { color: #2563eb; }
+  .toolbar { margin: 16px 0; }
+  .toolbar select { padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; }
+  .kpis { display: flex; gap: 16px; margin: 12px 0; flex-wrap: wrap; }
+  .kpi { background: #fff; border-radius: 12px; padding: 16px 24px; box-shadow: 0 1px 3px rgba(0,0,0,.08); flex: 1; min-width: 150px; }
+  .kpi.forecast { background: #eef2ff; }
+  .kpi.open { background: #fef3c7; }
+  .kpi .label { font-size: 12px; color: #6b7280; }
+  .kpi .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+  .kpi .delta { font-size: 12px; margin-left: 6px; font-weight: 600; }
+  .crossbar { display: none; gap: 8px; align-items: center; margin: 0 0 12px; font-size: 13px; flex-wrap: wrap; }
+  .crossbar .chip { background: #1e293b; color: #fff; border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card.wide { grid-column: 1 / -1; }
+  .tablefilter { display: flex; gap: 16px; align-items: center; margin-bottom: 10px; font-size: 13px; color: #374151; flex-wrap: wrap; }
+  .tablefilter select { padding: 5px 8px; border-radius: 8px; border: 1px solid #cbd5e1; }
+  .tablefilter .count { color: #6b7280; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { border-bottom: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; white-space: nowrap; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>問い合わせダッシュボード</h1>
+
+<div id="drop">
+  <b>inquiries.csv</b> をここにドラッグ&ドロップ、または
+  <input type="file" id="file" accept=".csv">
+</div>
+
+<div id="dashboard" class="hidden">
+  <div class="toolbar">
+    年度で絞り込み:
+    <select id="fyFilter">
+      <option value="all">全期間</option>
+      <option value="2024">FY2024(2024/4〜2025/3)</option>
+      <option value="2025">FY2025(2025/4〜2026/3)</option>
+      <option value="2026">FY2026(2026/4〜)</option>
+    </select>
+  </div>
+  <div class="crossbar" id="crossbar"></div>
+  <div class="kpis">
+    <div class="kpi"><div class="label">対象月の件数(前月比)</div><div class="value"><span id="kpiMonth">-</span><span class="delta" id="kpiMonthDelta"></span></div></div>
+    <div class="kpi open"><div class="label">継続中(未完了)</div><div class="value" id="kpiOpen">-</div></div>
+    <div class="kpi"><div class="label">解決率</div><div class="value" id="kpiResolved">-</div></div>
+    <div class="kpi forecast"><div class="label">翌月の件数 予測(増減)</div><div class="value"><span id="kpiForecast">-</span><span class="delta" id="kpiForecastDelta"></span></div></div>
+  </div>
+  <div class="charts">
+    <div class="card wide"><canvas id="chartMonthly"></canvas></div>
+    <div class="card wide"><canvas id="chartYoY"></canvas></div>
+    <div class="card"><canvas id="chartCategory"></canvas></div>
+    <div class="card"><canvas id="chartSub"></canvas></div>
+    <div class="card"><canvas id="chartType"></canvas></div>
+    <div class="card"><canvas id="chartCsat"></canvas></div>
+    <div class="card"><canvas id="chartFunnel"></canvas></div>
+    <div class="card"><canvas id="chartOpen"></canvas></div>
+    <div class="card wide"><canvas id="chartResp"></canvas></div>
+    <div class="card wide">
+      <h3>明細</h3>
+      <div class="tablefilter">
+        <label>担当者 <select id="fAssignee"><option value="">すべて</option></select></label>
+        <label>状況 <select id="fStatus"><option value="">すべて</option></select></label>
+        <span class="count" id="tableCount"></span>
+      </div>
+      <div style="overflow:auto; max-height: 360px;"><table id="table"></table></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('file');
+const fyFilter = document.getElementById('fyFilter');
+let allRows = [];
+let charts = {};
+let activeFilters = {};
+const OPEN_STATUSES = ['受付', '対応中', '保留'];
+const PIE_COLORS = ['#2563eb','#60a5fa','#93c5fd','#bfdbfe','#dbeafe','#e0e7ff'];
+
+fileInput.addEventListener('change', e => { if (e.target.files[0]) parseFile(e.target.files[0]); });
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('dragover'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+drop.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) parseFile(e.dataTransfer.files[0]);
+});
+fyFilter.addEventListener('change', () => { if (allRows.length) render(); });
+document.getElementById('fAssignee').addEventListener('change', renderTable);
+document.getElementById('fStatus').addEventListener('change', renderTable);
+
+function applyParsed(res) {
+  allRows = res.data;
+  allRows.forEach(r => r["受付月"] = (r["受付日時"] || '').slice(0,7));  // 月ドリル用の派生列
+  activeFilters = {};
+  render();
+}
+function parseFile(file) {
+  Papa.parse(file, {
+    header: true, skipEmptyLines: true,
+    transformHeader: h => h.replace(/^﻿/, ''),
+    complete: applyParsed
+  });
+}
+// ページ読込時に同階層の inquiries.csv を自動取得して表示(取得失敗時は手動ドロップで代替)
+Papa.parse('inquiries.csv', {
+  download: true, header: true, skipEmptyLines: true,
+  transformHeader: h => h.replace(/^﻿/, ''),
+  complete: applyParsed
+});
+
+function fiscalYear(d){ const y=parseInt(d.slice(0,4),10), m=parseInt(d.slice(5,7),10); return m>=4?y:y-1; }
+function fiscalMonthIndex(d){ return (parseInt(d.slice(5,7),10) - 4 + 12) % 12; }
+const FY_MONTH_LABELS = ['4月','5月','6月','7月','8月','9月','10月','11月','12月','1月','2月','3月'];
+function diffMinutes(a, b){ return (new Date(b.replace(' ','T')).getTime() - new Date(a.replace(' ','T')).getTime()) / 60000; }
+function addMonth(ym){ let y=parseInt(ym.slice(0,4),10), m=parseInt(ym.slice(5,7),10)+1; if(m>12){m=1;y++;} return `${y}-${String(m).padStart(2,'0')}`; }
+function subYear(ym){ return `${parseInt(ym.slice(0,4),10)-1}${ym.slice(4)}`; }
+function deltaBadge(cur, prev){ if(prev===0||prev==null) return ''; const d=Math.round((cur-prev)/prev*100), up=d>=0; return `<span style="color:${up?'#059669':'#dc2626'}">${up?'▲':'▼'}${Math.abs(d)}%</span>`; }
+function fillSelect(id, values){ const s=document.getElementById(id), c=s.value; s.innerHTML='<option value="">すべて</option>'+values.map(v=>`<option value="${v}">${v}</option>`).join(''); s.value=c; }
+
+// フィルタ ---------------------------------------------------------------
+function fyRows(){ const fy=fyFilter.value; return allRows.filter(r=> r["受付日時"] && (fy==='all'||String(fiscalYear(r["受付日時"]))===fy)); }
+function passesExcept(r, ex){ return Object.entries(activeFilters).every(([f,v])=> f===ex || String(r[f])===String(v)); }
+function rowsExcept(ex){ return fyRows().filter(r=>passesExcept(r,ex)); }
+function rowsAll(){ return fyRows().filter(r=>passesExcept(r,null)); }
+function toggleFilter(field, value){ if(activeFilters[field]===value) delete activeFilters[field]; else activeFilters[field]=value; render(); }
+function renderCrossbar(){
+  const el=document.getElementById('crossbar'), keys=Object.keys(activeFilters);
+  if(!keys.length){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='flex';
+  el.innerHTML='<span>絞り込み中:</span>'+keys.map(f=>`<span class="chip" data-f="${f}">${f} = ${activeFilters[f]} ✕</span>`).join('');
+  el.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{ delete activeFilters[c.dataset.f]; render(); });
+}
+
+function countBy(rows, key){ const m={}; rows.forEach(r=>{const k=r[key]||'(空)'; m[k]=(m[k]||0)+1;}); return m; }
+function topN(map, n){ return Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,n); }
+function monthCounts(rows){ const m={}; rows.forEach(r=>{const k=r["受付月"]; if(k) m[k]=(m[k]||0)+1;}); return m; }
+
+function render(){
+  document.getElementById('dashboard').classList.remove('hidden');
+  renderCrossbar();
+
+  // 月別(受付月フィルタを除いた全月。棒クリックで単月ドリルの操作元)
+  const monthAll = monthCounts(rowsExcept('受付月'));
+  const mkAll = Object.keys(monthAll).sort();
+  const fc = forecastNextMonth(monthAll, mkAll);
+  drawMonthlyBar('chartMonthly', mkAll, monthAll, fc);
+
+  // 対象月KPI(単月選択中はその月、なければ最新月)
+  const selMonth = activeFilters['受付月'];
+  const focus = selMonth || mkAll[mkAll.length-1];
+  const fidx = mkAll.indexOf(focus);
+  document.getElementById('kpiMonth').textContent = focus ? (monthAll[focus] ?? '-') : '-';
+  document.getElementById('kpiMonthDelta').innerHTML = deltaBadge(monthAll[focus]||0, monthAll[mkAll[fidx-1]]||0);
+
+  const latest = mkAll[mkAll.length-1];
+  const pred = fc.yoy!=null?fc.yoy:fc.ma;
+  document.getElementById('kpiForecast').textContent = pred!=null?pred:'-';
+  document.getElementById('kpiForecastDelta').innerHTML = (pred!=null&&latest)?deltaBadge(pred, monthAll[latest]):'';
+
+  // 継続・解決率(全フィルタ反映)
+  const filtered = rowsAll();
+  const resolved = filtered.filter(r=>r["ステータス"]==='解決'||r["ステータス"]==='クローズ').length;
+  document.getElementById('kpiOpen').textContent = filtered.filter(r=>OPEN_STATUSES.includes(r["ステータス"])).length;
+  document.getElementById('kpiResolved').textContent = filtered.length? Math.round(resolved/filtered.length*100)+'%':'-';
+
+  // 前年同月比(全期間・会計月)
+  const yoy={};
+  allRows.filter(r=>r["受付日時"]).forEach(r=>{ const f=fiscalYear(r["受付日時"]), idx=fiscalMonthIndex(r["受付日時"]); yoy[f]=yoy[f]||Array(12).fill(0); yoy[f][idx]++; });
+  drawYoY('chartYoY', FY_MONTH_LABELS, Object.keys(yoy).sort().map(k=>({label:'FY'+k, data:yoy[k]})));
+
+  // カテゴリ → 中分類
+  const cat = countBy(rowsExcept('カテゴリ'), 'カテゴリ');
+  drawClickBar('chartCategory', 'カテゴリ別件数', Object.keys(cat), Object.values(cat), 'カテゴリ', '#60a5fa');
+  const sub = topN(countBy(rowsExcept('中分類'), '中分類'), 12);
+  drawClickBar('chartSub', '中分類別件数(上位)', sub.map(e=>e[0]), sub.map(e=>e[1]), '中分類', '#a78bfa');
+
+  // 問い合わせ種別
+  const typ = countBy(rowsExcept('問い合わせ種別'), '問い合わせ種別');
+  drawClickBar('chartType', '問い合わせ種別', Object.keys(typ), Object.values(typ), '問い合わせ種別', '#34d399');
+
+  // 満足度(チーム全体の分布・円)
+  const cs = countBy(rowsExcept('満足度').filter(r=>r["満足度"]!==''&&r["満足度"]!=null), '満足度');
+  const csKeys = Object.keys(cs).sort();
+  drawClickPie('chartCsat', '満足度の分布', csKeys.map(k=>'★'+k), csKeys.map(k=>cs[k]), '満足度', csKeys);
+
+  // フェーズ別ファネル
+  const funnel={};
+  rowsExcept('フェーズ').forEach(r=>{ const k=r["フェーズ番号"]+':'+r["フェーズ"]; funnel[k]=(funnel[k]||0)+1; });
+  const fKeys=Object.keys(funnel).sort((a,b)=>parseInt(a)-parseInt(b));
+  drawClickBarH('chartFunnel', 'フェーズ別件数(ファネル)', fKeys, fKeys.map(k=>funnel[k]), 'フェーズ', k=>k.split(':')[1], '#818cf8');
+
+  // 担当者別 未完了(継続)
+  const openBy = countBy(rowsExcept('担当者').filter(r=>OPEN_STATUSES.includes(r["ステータス"])), '担当者');
+  drawClickBarH('chartOpen', '担当者別 未完了(継続)件数', Object.keys(openBy), Object.values(openBy), '担当者', k=>k, '#f59e0b');
+
+  // 担当者別 平均対応時間(受付→初回応答 / 初回応答→解決)
+  drawRespChart('chartResp', filtered);
+
+  fillSelect('fAssignee', [...new Set(allRows.map(r=>r["担当者"]).filter(Boolean))].sort());
+  fillSelect('fStatus', [...new Set(allRows.map(r=>r["ステータス"]).filter(Boolean))]);
+  renderTable();
+}
+
+function forecastNextMonth(byMonth, monthKeys){
+  if(monthKeys.length<2) return { nextMonth:null, ma:null, yoy:null, coef:null };
+  const latest=monthKeys[monthKeys.length-1];
+  const nextMonth=addMonth(latest);
+  const last3=monthKeys.slice(-3);
+  const ma=Math.round(last3.reduce((a,k)=>a+byMonth[k],0)/last3.length);
+  // 成長係数 = 今年度の判明月合計 ÷ 前年度の同じ月合計(件数を比較して導出)
+  const curFY=fiscalYear(latest);
+  const curMonths=monthKeys.filter(k=>fiscalYear(k)===curFY);
+  const thisSum=curMonths.reduce((a,k)=>a+(byMonth[k]||0),0);
+  const prevSum=curMonths.reduce((a,k)=>a+(byMonth[subYear(k)]||0),0);
+  const coef=prevSum>0?+(thisSum/prevSum).toFixed(2):null;
+  const lastYearNext=byMonth[subYear(nextMonth)];
+  const yoy=(coef!=null&&lastYearNext!=null)?Math.round(lastYearNext*coef):null;
+  return { nextMonth, ma, yoy, coef };
+}
+
+function renderTable(){
+  const fa=document.getElementById('fAssignee').value, fs=document.getElementById('fStatus').value;
+  const rows=rowsAll().filter(r=>(!fa||r["担当者"]===fa)&&(!fs||r["ステータス"]===fs));
+  document.getElementById('tableCount').textContent=`該当 ${rows.length} 件(先頭50件表示)`;
+  if(!allRows.length) return;
+  const cols=Object.keys(allRows[0]).filter(c=>c!=='受付月');  // 派生列は非表示
+  const head='<tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr>';
+  const body=rows.slice(0,50).map(r=>'<tr>'+cols.map(c=>`<td>${r[c]??''}</td>`).join('')+'</tr>').join('');
+  document.getElementById('table').innerHTML=head+body;
+}
+
+// 描画 -------------------------------------------------------------------
+function resetChart(id){ if(charts[id]) charts[id].destroy(); }
+function clickHandler(field, labels, valueOf){ return (e,els)=>{ if(els.length) toggleFilter(field, valueOf(labels[els[0].index])); }; }
+
+function drawMonthlyBar(id, months, map, fc){
+  resetChart(id);
+  const labels=months.slice();
+  const counts=months.map(m=>map[m]);
+  const colors=months.map(m=> activeFilters['受付月']===m ? '#1d4ed8' : '#60a5fa');
+  const fcData=months.map(()=>null);
+  if(fc.nextMonth){
+    labels.push(fc.nextMonth+'(予測)'); counts.push(null); colors.push('#cbd5e1');
+    fcData.push(fc.yoy!=null?fc.yoy:fc.ma);
+  }
+  charts[id]=new Chart(document.getElementById(id),{ type:'bar',
+    data:{ labels, datasets:[
+      { label:'件数', data:counts, backgroundColor:colors },
+      { label:'翌月予測', data:fcData, backgroundColor:'#f59e0b' },
+    ]},
+    options:{ plugins:{ title:{ display:true, text:'月別件数(棒をクリックで単月に絞り込み)' } },
+      onClick:(e,els)=>{ if(!els.length) return; const lbl=labels[els[0].index]; if(lbl.endsWith('(予測)')) return; toggleFilter('受付月', lbl); } }});
+}
+function drawYoY(id, labels, series){
+  resetChart(id);
+  const colors=['#94a3b8','#2563eb'];
+  charts[id]=new Chart(document.getElementById(id),{ type:'bar',
+    data:{ labels, datasets:series.map((s,i)=>({ label:s.label, data:s.data, backgroundColor:colors[i%2] })) },
+    options:{ plugins:{ title:{ display:true, text:'前年同月比(会計月)' } } }});
+}
+function drawClickBar(id, label, keys, values, field, color){
+  resetChart(id);
+  charts[id]=new Chart(document.getElementById(id),{ type:'bar',
+    data:{ labels:keys, datasets:[{ label, data:values, backgroundColor:keys.map(k=>activeFilters[field]===k?'#1d4ed8':color) }] },
+    options:{ onClick:clickHandler(field, keys, k=>k) }});
+}
+function drawClickBarH(id, label, keys, values, field, valueOf, color){
+  resetChart(id);
+  charts[id]=new Chart(document.getElementById(id),{ type:'bar',
+    data:{ labels:keys, datasets:[{ label, data:values, backgroundColor:keys.map(k=>activeFilters[field]===valueOf(k)?'#1d4ed8':color) }] },
+    options:{ indexAxis:'y', onClick:clickHandler(field, keys, valueOf) }});
+}
+function drawClickPie(id, label, dispLabels, values, field, rawKeys){
+  resetChart(id);
+  charts[id]=new Chart(document.getElementById(id),{ type:'doughnut',
+    data:{ labels:dispLabels, datasets:[{ label, data:values,
+      backgroundColor:rawKeys.map((k,i)=> activeFilters[field]===k?'#1d4ed8':PIE_COLORS[i%PIE_COLORS.length]) }] },
+    options:{ plugins:{ title:{ display:true, text:label } },
+      onClick:(e,els)=>{ if(els.length) toggleFilter(field, rawKeys[els[0].index]); } }});
+}
+function drawRespChart(id, rows){
+  const acc={};
+  rows.forEach(r=>{
+    const rep=r["担当者"]; if(!rep) return;
+    acc[rep]=acc[rep]||{fr:0,frn:0,rs:0,rsn:0};
+    if(r["受付日時"]&&r["初回応答日時"]){ const d=diffMinutes(r["受付日時"],r["初回応答日時"]); if(d>=0){acc[rep].fr+=d;acc[rep].frn++;} }
+    if(r["初回応答日時"]&&r["解決日時"]){ const d=diffMinutes(r["初回応答日時"],r["解決日時"]); if(d>=0){acc[rep].rs+=d;acc[rep].rsn++;} }
+  });
+  const reps=Object.keys(acc).sort();
+  const fr=reps.map(rp=> acc[rp].frn? +(acc[rp].fr/acc[rp].frn/60).toFixed(1):0);
+  const rs=reps.map(rp=> acc[rp].rsn? +(acc[rp].rs/acc[rp].rsn/60).toFixed(1):0);
+  resetChart(id);
+  charts[id]=new Chart(document.getElementById(id),{ type:'bar',
+    data:{ labels:reps, datasets:[
+      { label:'受付→初回応答(時間)', data:fr, backgroundColor:'#60a5fa' },
+      { label:'初回応答→解決(時間)', data:rs, backgroundColor:'#f59e0b' },
+    ]},
+    options:{ indexAxis:'y', plugins:{ title:{ display:true, text:'担当者別 平均対応時間' } },
+      onClick:(e,els)=>{ if(els.length) toggleFilter('担当者', reps[els[0].index]); } }});
+}
+</script>
+</body>
+</html>
