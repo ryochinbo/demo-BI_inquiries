@@ -24,9 +24,12 @@
   .kpi .delta { font-size: 12px; margin-left: 6px; font-weight: 600; }
   .crossbar { display: none; gap: 8px; align-items: center; margin: 0 0 12px; font-size: 13px; flex-wrap: wrap; }
   .crossbar .chip { background: #1e293b; color: #fff; border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
-  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
   .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); min-width: 0; }
   .card.wide { grid-column: 1 / -1; }
+  /* canvas を固定アスペクト比の wrapper に収め、Chart.js が grid のサイズ決定に関与しないようにする(リサイズループ/消失を防止) */
+  .chart-wrap { position: relative; width: 100%; aspect-ratio: 2 / 1; }
+  .chart-wrap.doughnut-wrap { aspect-ratio: 1 / 1; }
   .tablefilter { display: flex; gap: 16px; align-items: center; margin-bottom: 10px; font-size: 13px; color: #374151; flex-wrap: wrap; }
   .tablefilter select { padding: 5px 8px; border-radius: 8px; border: 1px solid #cbd5e1; }
   .tablefilter .count { color: #6b7280; }
@@ -62,15 +65,15 @@
     <div class="kpi forecast"><div class="label">翌月の件数 予測(増減)</div><div class="value"><span id="kpiForecast">-</span><span class="delta" id="kpiForecastDelta"></span></div></div>
   </div>
   <div class="charts">
-    <div class="card wide"><canvas id="chartMonthly"></canvas></div>
-    <div class="card wide"><canvas id="chartYoY"></canvas></div>
-    <div class="card"><canvas id="chartCategory"></canvas></div>
-    <div class="card"><canvas id="chartSub"></canvas></div>
-    <div class="card"><canvas id="chartType"></canvas></div>
-    <div class="card"><canvas id="chartCsat"></canvas></div>
-    <div class="card"><canvas id="chartFunnel"></canvas></div>
-    <div class="card"><canvas id="chartOpen"></canvas></div>
-    <div class="card wide"><canvas id="chartResp"></canvas></div>
+    <div class="card wide"><div class="chart-wrap"><canvas id="chartMonthly"></canvas></div></div>
+    <div class="card wide"><div class="chart-wrap"><canvas id="chartYoY"></canvas></div></div>
+    <div class="card"><div class="chart-wrap"><canvas id="chartCategory"></canvas></div></div>
+    <div class="card"><div class="chart-wrap"><canvas id="chartSub"></canvas></div></div>
+    <div class="card"><div class="chart-wrap"><canvas id="chartType"></canvas></div></div>
+    <div class="card"><div class="chart-wrap doughnut-wrap"><canvas id="chartCsat"></canvas></div></div>
+    <div class="card"><div class="chart-wrap"><canvas id="chartFunnel"></canvas></div></div>
+    <div class="card"><div class="chart-wrap"><canvas id="chartOpen"></canvas></div></div>
+    <div class="card wide"><div class="chart-wrap"><canvas id="chartResp"></canvas></div></div>
     <div class="card wide">
       <h3>明細</h3>
       <div class="tablefilter">
@@ -84,6 +87,9 @@
 </div>
 
 <script>
+// responsive のまま canvas を wrapper サイズに完全追従させ、自動アスペクト比計算による
+// grid 内でのリサイズループ/消失を防止する(各チャートの wrapper は CSS aspect-ratio で固定)
+if (window.Chart) { Chart.defaults.maintainAspectRatio = false; Chart.defaults.responsive = true; }
 const drop = document.getElementById('drop');
 const fileInput = document.getElementById('file');
 const fyFilter = document.getElementById('fyFilter');
