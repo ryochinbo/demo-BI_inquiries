@@ -7,7 +7,8 @@
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
-  body { font-family: "Segoe UI", "Meiryo", sans-serif; margin: 0; padding: 24px; background: #f5f7fa; color: #1f2937; }
+  html { background: #f5f7fa; }   /* body を中央寄せしても画面端まで背景を塗る */
+  body { font-family: "Segoe UI", "Meiryo", sans-serif; margin: 0 auto; padding: 24px; max-width: 1240px; background: #f5f7fa; color: #1f2937; }
   h1 { font-size: 20px; margin: 0 0 14px; }
   #drop { border: 2px dashed #9ca3af; border-radius: 12px; padding: 28px; text-align: center; background: #fff; color: #6b7280; cursor: pointer; }
   #drop.dragover { border-color: #2563eb; background: #eff6ff; color: #2563eb; }
@@ -24,7 +25,7 @@
   .crossbar { display: none; gap: 8px; align-items: center; margin: 0 0 12px; font-size: 13px; flex-wrap: wrap; }
   .crossbar .chip { background: #1e293b; color: #fff; border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
   .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); min-width: 0; }
   .card.wide { grid-column: 1 / -1; }
   .tablefilter { display: flex; gap: 16px; align-items: center; margin-bottom: 10px; font-size: 13px; color: #374151; flex-wrap: wrap; }
   .tablefilter select { padding: 5px 8px; border-radius: 8px; border: 1px solid #cbd5e1; }
@@ -32,6 +33,7 @@
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th, td { border-bottom: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; white-space: nowrap; }
   .hidden { display: none; }
+  @media (max-width:860px){ .charts{ grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
